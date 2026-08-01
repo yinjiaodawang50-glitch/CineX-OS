@@ -1096,8 +1096,9 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(100, self._check_fill_viewport)
 
     def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self._resize_timer.start()
+            super().resizeEvent(e)
+            if hasattr(self, '_resize_timer') and self._resize_timer:
+                self._resize_timer.start()
 
     # ── 健康检测（简化版，仅更新延迟数据，UI 交给设置页） ──
     def _run_health_check(self):
