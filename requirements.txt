@@ -1,0 +1,22 @@
+# CineX OS - 依赖清单
+# Windows / Linux (Debian/Ubuntu) 通用
+# 安装命令: pip install -r requirements.txt
+
+# ============ 核心 GUI 框架 ============
+PyQt6>=6.6.0
+PyQt6-Qt6>=6.6.0
+PyQt6-sip>=13.6.0
+
+# ============ 可选：性能优化库（有则更优） ============
+# 更快的 JSON 解析（Python 3.11+ 内置 json 已足够快，可不装）
+#orjson>=3.9.0
+
+# 可选：更强的 HTTP/SSL（项目内置 urllib + 忽略 SSL 已够用）
+#requests>=2.31.0
+#urllib3>=2.0.0
+
+# ============ Linux 系统依赖提示（Debian/Ubuntu 需用 apt 安装） ============
+# 以下需通过系统包管理器安装，非 pip 管理:
+#   $ sudo apt install -y mpv libmpv2 python3-pyqt6 python3-pyqt6.qtsvg
+#   $ sudo apt install -y fonts-noto-cjk fonts-noto-sc  # 中文字体（防豆腐块）
+#   $ sudo apt install -y libqt6svg6 libegl1 libgl1      # Qt SVG / OpenGL 渲染
