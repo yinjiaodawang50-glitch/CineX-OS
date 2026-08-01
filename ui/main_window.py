@@ -324,7 +324,11 @@ class MainWindow(QMainWindow):
 
         if self.is_kiosk:
             self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+            screen = QApplication.primaryScreen()
+            if screen:
+                self.setGeometry(screen.geometry()) # 强制铺满物理屏幕
             self.showFullScreen()
+
         else:
             self.resize(self.s(1200), self.s(760))
             self.setMinimumSize(self.s(900), self.s(600))
@@ -380,12 +384,13 @@ class MainWindow(QMainWindow):
         logger.info("MainWindow initialized (kiosk=%s)", self.is_kiosk)
 
     def _calc_ui_scale(self):
-        screen = QApplication.primaryScreen()
-        if not screen:
-            return 1.0
-        h = screen.size().height()
-        scale = h / 1080.0
-        return max(0.75, min(2.0, scale))
+            screen = QApplication.primaryScreen()
+            if not screen:
+                return 1.0
+            # 改用 geometry().height() 准确获取物理高度
+            h = screen.geometry().height()
+            scale = h / 1080.0
+            return max(0.75, min(2.0, scale))
 
     def s(self, px_val):
         return max(1, int(px_val * self.ui_scale))
