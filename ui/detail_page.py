@@ -37,8 +37,15 @@ class DetailPage(QWidget):
         self._load_thread = None
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setObjectName("DetailPage")
+                self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+                self.setObjectName("DetailPage")
+        
+                # 强制铺满物理屏幕
+                screen = QApplication.primaryScreen()
+                if screen:
+                    self.setGeometry(screen.geometry())
+                self.showFullScreen()
+
 
         # 1. 优先绘制 UI 框架，显示加载状态（主线程零卡顿）
         self._build_ui_skeleton()
