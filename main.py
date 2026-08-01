@@ -100,8 +100,9 @@ def main():
     splash = SplashScreen(logo_path)
     splash.show()
 
-    # 3. 后台同步初始化主窗口 (此时用户看到的是精致的 Logo 淡入)
-    win = MainWindow(is_kiosk=False)
+    # 默认开启全屏电视 Kiosk 模式（如果运行 python main.py --windowed 则为窗口模式）
+    is_kiosk = "--windowed" not in sys.argv
+    win = MainWindow(is_kiosk=is_kiosk)
 
     # 4. 动画生命周期控制：淡入 (800ms) ➔ 停留 (1200ms) ➔ 淡出 (600ms) ➔ 显示主界面
     def on_fade_out_finished():
