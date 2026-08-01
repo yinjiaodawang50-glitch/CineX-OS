@@ -40,11 +40,6 @@ class DetailPage(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setObjectName("DetailPage")
         
-            # 强制铺满物理屏幕
-            screen = QApplication.primaryScreen()
-            if screen:
-                self.setGeometry(screen.geometry())
-            self.showFullScreen()
 
 
         # 1. 优先绘制 UI 框架，显示加载状态（主线程零卡顿）
@@ -62,6 +57,12 @@ class DetailPage(QWidget):
 
         # 3. 异步获取详情数据（解决进入详情页卡死问题）
         self._fetch_detail_async()
+
+            # 强制铺满物理屏幕
+        screen = QApplication.primaryScreen()
+        if screen:
+            self.setGeometry(screen.geometry())
+        self.showFullScreen()
 
     def _colors(self):
         return Theme.DARK if self.is_dark else Theme.LIGHT
