@@ -34,13 +34,6 @@ class SettingsPage(QWidget):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
-        # 强制铺满物理屏幕
-        screen = QApplication.primaryScreen()
-        if screen:
-            self.setGeometry(screen.geometry())
-        self.showFullScreen()
-
-
         QApplication.setStyle("Fusion")
 
         self._current_row_focus = None
@@ -48,10 +41,17 @@ class SettingsPage(QWidget):
         self._button_group_mode = False
         self._active_page = None
 
+        # 1. 优先构建 UI 控件！
         self._build_ui()
         self._apply_theme()
         self._apply_font_size()
         self.installEventFilter(self)
+
+        # 2. 控件构建完成后，再进行全屏铺满！
+        screen = QApplication.primaryScreen()
+        if screen:
+            self.setGeometry(screen.geometry())
+        self.showFullScreen()
 
     @property
     def is_dark_mode(self):
@@ -1328,6 +1328,7 @@ class SettingsPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._group_list.setFocus()
-        self._clear_row_focus()
-        self._active_page = self._stack.currentWidget()
+        if hasattr(self, '_group_list') and self._group_list:
+            self._group_list.setFocus()
+            self._clear_row_focus()
+            self._active_page = self._stack.currentWidget()
