@@ -34,6 +34,13 @@ class SettingsPage(QWidget):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
+        # 强制铺满物理屏幕
+        screen = QApplication.primaryScreen()
+        if screen:
+            self.setGeometry(screen.geometry())
+        self.showFullScreen()
+
+
         QApplication.setStyle("Fusion")
 
         self._current_row_focus = None
