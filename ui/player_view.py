@@ -367,16 +367,25 @@ class EmbeddedPlayerWindow(QWidget):
             "--no-input-default-bindings",
             "--input-vo-keyboard=no",
             "--input-cursor=no",
-            "--vo=gpu,direct3d11,gdi",
-            "--hwdec=auto-safe",
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             f"--title={self.title_text} - {self.current_ep_name}"
         ]
 
-        if hw == "软解":
-            cmd.remove("--hwdec=auto-safe")
-            cmd.append("--hwdec=no")
+        # 1. 精准识别并应用设置页里的“硬件加速”选项
+        if hw == "强制硬解":
+            cmd.append("--hwdec=auto")      # 强制启用 GPU 硬件解码
+        elif hw == "软解":
+            cmd.append("--hwdec=no")        # 完全关闭硬解，纯 CPU 软解
+        else:
+            cmd.append("--hwdec=auto-safe") # 默认“自动”：优先硬解，失败自动切软解
 
+        # 2. 区分平台配置视频渲染驱动 (防止 Linux 因识别不了 direct3d11 报错闪退)
+        if sys.platform == "win32":
+            cmd.append("--vo=gpu,direct3d11,gdi")
+        else:
+            cmd.append("--vo=gpu,x11")
+
+        # 3. 处理跳过片头与断点续播 (之前漏掉了这里)
         if skip_start > 0:
             cmd.append(f"--start={skip_start}")
 
@@ -385,6 +394,7 @@ class EmbeddedPlayerWindow(QWidget):
         if pos_sec > 10 and skip_start == 0:
             cmd.append(f"--start={int(pos_sec)}")
 
+        # 4. 传入视频地址 (必须放最后)
         cmd.append(self.video_url)
 
         logger.info("启动内嵌 MPV: %s", " ".join(cmd))
