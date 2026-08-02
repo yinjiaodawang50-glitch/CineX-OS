@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QFrame, QSlider, QProgressBar, QApplication
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, QSize, QEvent, QThread, pyqtSignal
+    Qt, QTimer, QSize, QEvent, QThread, pyqtSignal, QPoint, QPointF
 )
 from PyQt6.QtGui import QColor, QFont, QPainter
 
