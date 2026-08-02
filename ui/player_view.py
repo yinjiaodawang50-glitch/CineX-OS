@@ -1,14 +1,10 @@
 # ui/player_view.py
 """
-CineX OS — 10-Foot 内嵌式 MPV 播放器与矢量 SVG 图标 OSD 菜单
-- 彻底解决“打开播放器无操作不自动隐藏”问题（首帧连接成功后自动重启 4 秒隐退计时器）
-- 彻底修复聚焦失效与高亮不显示问题（回归父子控件树，共享窗口焦点）
-- 物理清屏机制 (CompositionMode_Clear)：彻底根除旧图像重叠、按钮多高亮、卡片不消失 Bug
-- 10-Foot 遥控器直觉唤醒机制（隐藏时按键仅唤醒 OSD，防止误切倍速/误快进）
-- 全新发光可聚焦/可拖动进度条 (QSlider)，支持 2D 空间物理焦点导航
-- 彻底解决“有声音无画面/黑屏”问题 (禁用 Qt 重绘背景 + 显式 MPV VO 降级链)
-- 彻底解决主线程阻塞卡死（IPC 状态轮询与命令全部移入后台 Worker 线程）
-- 秒级精准断点续播进度回写 user_data.json
+CineX OS — 10-Foot 内嵌式 MPV 播放器与多面板响应式 OSD 菜单
+- 彻底解决 Linux/X11 遮挡导致的 4 秒黑屏（顶栏与底栏独立面板排版，观影区域 0 遮挡）
+- 响应式 DPI 放缩（self.s()）：自动完美适配 4K、1080p 及 720p 等任意尺寸电视大屏
+- 10-Foot 电视遥控器防误触唤醒与 2D 空间物理焦点导航
+- 异步 IPC 状态轮询与断点续播进度回写
 """
 
 import os
@@ -23,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QSlider, QProgressBar, QApplication
+    QFrame, QSlider, QApplication
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QEvent, QThread, pyqtSignal
@@ -36,35 +32,8 @@ from core.theme import Theme
 logger = logging.getLogger("EmbeddedPlayer")
 
 
-class OSDOverlay(QWidget):
-    """置顶全透明 OSD 悬浮蒙层"""
-    def __init__(self, parent_player):
-        super().__init__(parent_player)
-        self.player = parent_player
-
-        if sys.platform == "win32":
-            # Windows 下保持子控件，DWM 完美渲染
-            self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        else:
-            # Linux/X11 下使用顶级置顶 + BypassWindowManagerHint 绕过 X11 遮挡
-            self.setWindowFlags(
-                Qt.WindowType.Window |
-                Qt.WindowType.FramelessWindowHint |
-                Qt.WindowType.WindowStaysOnTopHint |
-                Qt.WindowType.BypassWindowManagerHint
-            )
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-
-        self.setObjectName("OSDOverlay")
-        self.setStyleSheet("background: transparent;")
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-
-
 class MPVStatusWorker(QThread):
-    """后台异步 IPC 线程：专门负责与 MPV 管道通信，彻底解除主线程卡死"""
+    """后台异步 IPC 线程：负责与 MPV 管道通信，彻底解除主线程卡死"""
     status_updated = pyqtSignal(float, float, bool, bool)  # pos, dur, is_buf, has_video
 
     def __init__(self, ipc_path, parent=None):
@@ -171,7 +140,7 @@ class EmbeddedPlayerWindow(QWidget):
         self._build_ui()
         self._apply_theme()
 
-        # 安装全局与本地事件过滤器
+        # 安装事件过滤器
         self.installEventFilter(self)
         QApplication.instance().installEventFilter(self)
 
@@ -187,17 +156,13 @@ class EmbeddedPlayerWindow(QWidget):
         self._center_popup_timer.setInterval(1200)
         self._center_popup_timer.timeout.connect(self._hide_center_popup)
 
-    def _sync_overlay_geometry(self):
-        if hasattr(self, "osd_overlay") and self.osd_overlay:
-            if sys.platform == "win32":
-                self.osd_overlay.setGeometry(0, 0, self.width(), self.height())
-            else:
-                try:
-                    global_pos = self.mapToGlobal(QPoint(0, 0))
-                    self.osd_overlay.setGeometry(global_pos.x(), global_pos.y(), self.width(), self.height())
-                except Exception:
-                    pass
-
+    def s(self, px_val: int) -> int:
+        """根据当前电视物理分辨率（如 4K/1080p/720p），动态计算缩放后的像素值"""
+        if hasattr(self, "main") and self.main and hasattr(self.main, "s"):
+            return self.main.s(px_val)
+        screen = QApplication.primaryScreen()
+        h = screen.geometry().height() if screen else 1080
+        return max(1, int(px_val * (h / 1080.0)))
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -206,6 +171,30 @@ class EmbeddedPlayerWindow(QWidget):
         if not self._mpv_started:
             self._mpv_started = True
             QTimer.singleShot(50, self._start_mpv)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        w, h = self.width(), self.height()
+        
+        # 1. 视频容器铺满
+        self.video_container.setGeometry(0, 0, w, h)
+        
+        # 2. 顶部栏贴顶 (根据 DPI 动态自适应高度)
+        top_h = max(self.s(70), self.top_bar_frame.sizeHint().height())
+        self.top_bar_frame.setGeometry(0, 0, w, top_h)
+        
+        # 3. 底部栏贴底 (根据 DPI 动态自适应高度)
+        bottom_h = max(self.s(130), self.bottom_bar_frame.sizeHint().height())
+        self.bottom_bar_frame.setGeometry(0, h - bottom_h, w, bottom_h)
+        
+        # 4. 中央卡片动态居中
+        cw, ch = self.s(420), self.s(80)
+        self.center_card_frame.setGeometry((w - cw) // 2, (h - ch) // 2, cw, ch)
+
+        # 保障原生 Z 轴层级置顶
+        self.top_bar_frame.raise_()
+        self.bottom_bar_frame.raise_()
+        self.center_card_frame.raise_()
 
     def _extract_ep_info(self):
         if self.routes and self.route_idx < len(self.routes):
@@ -216,84 +205,42 @@ class EmbeddedPlayerWindow(QWidget):
 
     # ── UI 构建 ──────────────────────────────────────────────────
     def _build_ui(self):
-        # 视频渲染容器与 OSDOverlay 作为同级原生子控件
+        main_lay = QVBoxLayout(self)
+        main_lay.setContentsMargins(0, 0, 0, 0)
+
+        # 1. 底层：视频渲染容器 (全屏)
         self.video_container = QWidget(self)
         self.video_container.setObjectName("VideoContainer")
         self.video_container.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self.video_container.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
+        main_lay.addWidget(self.video_container)
 
-        self.osd_overlay = OSDOverlay(self)
+        # 2. 上层：顶部控制面板 (贴顶，只占顶部区域)
+        self.top_bar_frame = QFrame(self)
+        self.top_bar_frame.setObjectName("OSDTopBar")
+        top_lay = QHBoxLayout(self.top_bar_frame)
+        top_lay.setContentsMargins(self.s(40), self.s(12), self.s(40), self.s(12))
 
-        # 布局直接加在 osd_overlay 上
-        osd_lay = QVBoxLayout(self.osd_overlay)
-        osd_lay.setContentsMargins(40, 30, 40, 30)
-
-
-        # 顶部 OSD 栏
-        top_bar = QHBoxLayout()
         self.lbl_title = QLabel(f"《{self.title_text}》  {self.current_ep_name}")
         self.lbl_title.setObjectName("OSDTitle")
+        top_lay.addWidget(self.lbl_title)
+        top_lay.addStretch()
 
-        top_bar.addWidget(self.lbl_title)
-        top_bar.addStretch()
-
+        btn_icon_sz = QSize(self.s(16), self.s(16))
         self.btn_close = QPushButton(" 退出播放")
         self.btn_close.setObjectName("OSDCloseBtn")
         self.btn_close.setIcon(Theme.create_icon("x", "#EF4444", 16))
-        self.btn_close.setIconSize(QSize(16, 16))
+        self.btn_close.setIconSize(btn_icon_sz)
         self.btn_close.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.btn_close.clicked.connect(self._close_player)
-        top_bar.addWidget(self.btn_close)
+        top_lay.addWidget(self.btn_close)
 
-        osd_lay.addLayout(top_bar)
-
-        # 中央动效与网络缓冲提示
-        osd_lay.addStretch()
-        center_box = QHBoxLayout()
-        center_box.addStretch()
-
-        # 加载缓冲提示卡片
-        self.loading_card = QFrame()
-        self.loading_card.setObjectName("OSDLoadingCard")
-        loading_lay = QHBoxLayout(self.loading_card)
-        loading_lay.setContentsMargins(20, 10, 20, 10)
-        loading_lay.setSpacing(10)
-
-        self.lbl_loading_icon = QLabel()
-        self.lbl_loading_icon.setPixmap(Theme.create_icon("zap", "#00C2D1", 20).pixmap(20, 20))
-        self.lbl_loading_text = QLabel("正在解析并连接视频源，请稍候...")
-        self.lbl_loading_text.setObjectName("OSDLoadingText")
-
-        loading_lay.addWidget(self.lbl_loading_icon)
-        loading_lay.addWidget(self.lbl_loading_text)
-
-        # 中央弹窗（快进退/暂停）卡片
-        self.popup_card = QFrame()
-        self.popup_card.setObjectName("CenterPopupCard")
-        popup_lay = QHBoxLayout(self.popup_card)
-        popup_lay.setContentsMargins(28, 14, 28, 14)
-        popup_lay.setSpacing(12)
-
-        self.lbl_popup_icon = QLabel()
-        self.lbl_popup_text = QLabel()
-        self.lbl_popup_text.setObjectName("CenterPopupText")
-
-        popup_lay.addWidget(self.lbl_popup_icon)
-        popup_lay.addWidget(self.lbl_popup_text)
-        self.popup_card.hide()
-
-        center_vbox = QVBoxLayout()
-        center_vbox.addWidget(self.loading_card, alignment=Qt.AlignmentFlag.AlignCenter)
-        center_vbox.addWidget(self.popup_card, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        center_box.addLayout(center_vbox)
-        center_box.addStretch()
-        osd_lay.addLayout(center_box)
-        osd_lay.addStretch()
-
-        # 底部 OSD 播放控制栏
-        bottom_bar = QVBoxLayout()
-        bottom_bar.setSpacing(10)
+        # 3. 上层：底部控制面板 (贴底，只占底部区域)
+        self.bottom_bar_frame = QFrame(self)
+        self.bottom_bar_frame.setObjectName("OSDBottomBar")
+        bottom_lay = QVBoxLayout(self.bottom_bar_frame)
+        bottom_lay.setContentsMargins(self.s(40), self.s(10), self.s(40), self.s(15))
+        bottom_lay.setSpacing(self.s(8))
 
         time_row = QHBoxLayout()
         self.lbl_time_pos = QLabel("00:00:00 / 00:00:00")
@@ -305,9 +252,8 @@ class EmbeddedPlayerWindow(QWidget):
         time_row.addWidget(self.lbl_time_pos)
         time_row.addStretch()
         time_row.addWidget(self.lbl_hint)
-        bottom_bar.addLayout(time_row)
+        bottom_lay.addLayout(time_row)
 
-        # 核心改动：支持遥控器聚焦与拖动的进度条滑块
         self.seek_slider = QSlider(Qt.Orientation.Horizontal)
         self.seek_slider.setObjectName("OSDSeekSlider")
         self.seek_slider.setRange(0, 1000)
@@ -315,29 +261,31 @@ class EmbeddedPlayerWindow(QWidget):
         self.seek_slider.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.seek_slider.sliderMoved.connect(self._on_slider_moved)
         self.seek_slider.sliderReleased.connect(self._on_slider_released)
-        bottom_bar.addWidget(self.seek_slider)
+        bottom_lay.addWidget(self.seek_slider)
 
         ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(16)
+        ctrl_row.setSpacing(self.s(16))
+
+        ctrl_icon_sz = QSize(self.s(18), self.s(18))
 
         self.btn_play_pause = QPushButton(" 暂停")
         self.btn_play_pause.setObjectName("OSDCtrlBtn")
         self.btn_play_pause.setIcon(Theme.create_icon("pause", "#E8EEF2", 18))
-        self.btn_play_pause.setIconSize(QSize(18, 18))
+        self.btn_play_pause.setIconSize(ctrl_icon_sz)
         self.btn_play_pause.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.btn_play_pause.clicked.connect(self._toggle_pause)
 
         self.btn_speed = QPushButton(f" {self._current_speed}x 倍速")
         self.btn_speed.setObjectName("OSDCtrlBtn")
         self.btn_speed.setIcon(Theme.create_icon("zap", "#00C2D1", 18))
-        self.btn_speed.setIconSize(QSize(18, 18))
+        self.btn_speed.setIconSize(ctrl_icon_sz)
         self.btn_speed.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.btn_speed.clicked.connect(self._cycle_speed)
 
         self.btn_next = QPushButton(" 下一集")
         self.btn_next.setObjectName("OSDCtrlBtn")
         self.btn_next.setIcon(Theme.create_icon("skip_forward", "#E8EEF2", 18))
-        self.btn_next.setIconSize(QSize(18, 18))
+        self.btn_next.setIconSize(ctrl_icon_sz)
         self.btn_next.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.btn_next.clicked.connect(self._play_next_episode)
 
@@ -346,16 +294,46 @@ class EmbeddedPlayerWindow(QWidget):
         ctrl_row.addWidget(self.btn_next)
         ctrl_row.addStretch()
 
-        bottom_bar.addLayout(ctrl_row)
-        osd_lay.addLayout(bottom_bar)
+        bottom_lay.addLayout(ctrl_row)
 
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        w, h = self.width(), self.height()
-        # 画面与 OSD 在同一窗口内部精准重叠
-        self.video_container.setGeometry(0, 0, w, h)
-        self.osd_overlay.setGeometry(0, 0, w, h)
-        self.osd_overlay.raise_()  # 在同级原生窗口中，将 OSD 原生子窗口压在视频原生子窗口上方
+        # 4. 上层：中央卡片容器 (居中小卡片)
+        self.center_card_frame = QFrame(self)
+        self.center_card_frame.setObjectName("OSDCenterFrame")
+        center_lay = QVBoxLayout(self.center_card_frame)
+        center_lay.setContentsMargins(0, 0, 0, 0)
+
+        self.loading_card = QFrame()
+        self.loading_card.setObjectName("OSDLoadingCard")
+        loading_lay = QHBoxLayout(self.loading_card)
+        loading_lay.setContentsMargins(self.s(20), self.s(10), self.s(20), self.s(10))
+        loading_lay.setSpacing(self.s(10))
+
+        self.lbl_loading_icon = QLabel()
+        self.lbl_loading_icon.setPixmap(
+            Theme.create_icon("zap", "#00C2D1", self.s(20)).pixmap(self.s(20), self.s(20))
+        )
+        self.lbl_loading_text = QLabel("正在解析并连接视频源，请稍候...")
+        self.lbl_loading_text.setObjectName("OSDLoadingText")
+
+        loading_lay.addWidget(self.lbl_loading_icon)
+        loading_lay.addWidget(self.lbl_loading_text)
+
+        self.popup_card = QFrame()
+        self.popup_card.setObjectName("CenterPopupCard")
+        popup_lay = QHBoxLayout(self.popup_card)
+        popup_lay.setContentsMargins(self.s(28), self.s(14), self.s(28), self.s(14))
+        popup_lay.setSpacing(self.s(12))
+
+        self.lbl_popup_icon = QLabel()
+        self.lbl_popup_text = QLabel()
+        self.lbl_popup_text.setObjectName("CenterPopupText")
+
+        popup_lay.addWidget(self.lbl_popup_icon)
+        popup_lay.addWidget(self.lbl_popup_text)
+        self.popup_card.hide()
+
+        center_lay.addWidget(self.loading_card)
+        center_lay.addWidget(self.popup_card)
 
     # ── MPV 启动与异步 Worker ──
     def _start_mpv(self):
@@ -397,21 +375,18 @@ class EmbeddedPlayerWindow(QWidget):
             f"--title={self.title_text} - {self.current_ep_name}"
         ]
 
-        # 1. 精准识别并应用设置页里的“硬件加速”选项
         if hw == "强制硬解":
-            cmd.append("--hwdec=auto")      # 强制启用 GPU 硬件解码
+            cmd.append("--hwdec=auto")
         elif hw == "软解":
-            cmd.append("--hwdec=no")        # 完全关闭硬解，纯 CPU 软解
+            cmd.append("--hwdec=no")
         else:
-            cmd.append("--hwdec=auto-safe") # 默认“自动”：优先硬解，失败自动切软解
+            cmd.append("--hwdec=auto-safe")
 
-        # 2. 区分平台配置视频渲染驱动 (防止 Linux 因识别不了 direct3d11 报错闪退)
         if sys.platform == "win32":
             cmd.append("--vo=gpu,direct3d11,gdi")
         else:
             cmd.append("--vo=gpu,x11")
 
-        # 3. 处理跳过片头与断点续播 (之前漏掉了这里)
         if skip_start > 0:
             cmd.append(f"--start={skip_start}")
 
@@ -420,7 +395,6 @@ class EmbeddedPlayerWindow(QWidget):
         if pos_sec > 10 and skip_start == 0:
             cmd.append(f"--start={int(pos_sec)}")
 
-        # 4. 传入视频地址 (必须放最后)
         cmd.append(self.video_url)
 
         logger.info("启动内嵌 MPV: %s", " ".join(cmd))
@@ -434,7 +408,6 @@ class EmbeddedPlayerWindow(QWidget):
                 errors="ignore"
             )
 
-            # 启动后台非阻塞 IPC 状态轮询线程
             self._worker = MPVStatusWorker(self.ipc_path)
             self._worker.status_updated.connect(self._on_status_updated)
             self._worker.start()
@@ -447,38 +420,26 @@ class EmbeddedPlayerWindow(QWidget):
             self._close_player()
 
     def _on_status_updated(self, pos_sec, duration_sec, is_buffering, has_video):
-        """后台 Worker 异步回调：捕捉首帧画面，清除加载卡片并刷新进度"""
         self._pos_sec = pos_sec
         self._duration_sec = duration_sec
 
-        first_start = False
-        # 只要接收到图像画面、播放秒数或总时长，立刻判定视频建立成功
         if has_video or self._pos_sec > 0 or self._duration_sec > 0:
             if not self._has_video_started:
                 self._has_video_started = True
-                first_start = True
 
-        # 首帧连接成功后立刻强制隐藏中央加载卡片
         if self._has_video_started and not is_buffering:
             if self.loading_card.isVisible():
                 self.loading_card.hide()
-                self.osd_overlay.update()
-            # 核心修正：首帧播放成功后，重新激活启动 4 秒隐藏计时器！
-            if first_start:
-                self._osd_timer.start()
         else:
             if is_buffering:
                 self.lbl_loading_text.setText("正在缓冲视频数据，请稍候...")
                 if not self.loading_card.isVisible():
                     self.loading_card.show()
-                    self.osd_overlay.update()
             elif not self._has_video_started:
                 self.lbl_loading_text.setText("正在解析并连接视频源，请稍候...")
                 if not self.loading_card.isVisible():
                     self.loading_card.show()
-                    self.osd_overlay.update()
 
-        # 更新进度条范围与当前秒数（拖动滑块时不被覆盖）
         if self._duration_sec > 0:
             self.seek_slider.setRange(0, int(self._duration_sec))
             if not self._is_user_seeking:
@@ -488,7 +449,7 @@ class EmbeddedPlayerWindow(QWidget):
             dur_str = time.strftime("%H:%M:%S", time.gmtime(self._duration_sec))
             self.lbl_time_pos.setText(f"{pos_str} / {dur_str}")
 
-    # ── 滑块拖动与快进退动作 ──
+    # ── 滑块拖动与快进退 ──
     def _on_slider_moved(self, val):
         self._is_user_seeking = True
         self._show_osd()
@@ -518,38 +479,31 @@ class EmbeddedPlayerWindow(QWidget):
 
     # ── OSD 显示与隐藏控制 ──
     def _show_osd(self):
-        self._sync_overlay_geometry()
-        self.osd_overlay.show()
-        self.osd_overlay.raise_()
-
-        # 【关键修正 3】：强行把被 MPV X11 窗口抢走的焦点抢回来给 OSD
-        if sys.platform != "win32":
-            self.osd_overlay.activateWindow()
-
-        if not self.focusWidget() or not self.osd_overlay.isAncestorOf(self.focusWidget()):
+        self.top_bar_frame.show()
+        self.bottom_bar_frame.show()
+        self.top_bar_frame.raise_()
+        self.bottom_bar_frame.raise_()
+        if not self.focusWidget() or not self.bottom_bar_frame.isAncestorOf(self.focusWidget()):
             self.seek_slider.setFocus()
-            
         self._osd_timer.start()
 
     def _hide_osd(self):
         if not self._has_video_started or self.loading_card.isVisible():
             return
-        self.osd_overlay.hide()
-
+        self.top_bar_frame.hide()
+        self.bottom_bar_frame.hide()
 
     def _show_center_popup(self, icon_name, text):
         self.lbl_popup_icon.setPixmap(
-            Theme.create_icon(icon_name, "#33D6E0", 28).pixmap(28, 28)
+            Theme.create_icon(icon_name, "#33D6E0", self.s(28)).pixmap(self.s(28), self.s(28))
         )
         self.lbl_popup_text.setText(text)
         self.popup_card.show()
-        self.popup_card.raise_()
-        self.osd_overlay.update()
+        self.center_card_frame.raise_()
         self._center_popup_timer.start()
 
     def _hide_center_popup(self):
         self.popup_card.hide()
-        self.osd_overlay.update()
 
     # ── 播放动作控制 ──
     def _toggle_pause(self):
@@ -629,7 +583,6 @@ class EmbeddedPlayerWindow(QWidget):
             QApplication.instance().removeEventFilter(self)
         except Exception:
             pass
-        self.osd_overlay.close()
         self.close()
         if self.main:
             if hasattr(self.main, "_current_player"):
@@ -645,7 +598,6 @@ class EmbeddedPlayerWindow(QWidget):
             QApplication.instance().removeEventFilter(self)
         except Exception:
             pass
-        self.osd_overlay.close()
         super().closeEvent(event)
 
     # ── 电视遥控器防误触唤醒与 2D 焦点物理导航 ──
@@ -658,7 +610,7 @@ class EmbeddedPlayerWindow(QWidget):
                 self._close_player()
                 return True
 
-            is_osd_visible = self.osd_overlay.isVisible()
+            is_osd_visible = self.top_bar_frame.isVisible() or self.bottom_bar_frame.isVisible()
 
             # 2. 直觉控制：当 OSD 隐藏时，按方向键/OK 仅唤醒 OSD，防误触
             if not is_osd_visible:
@@ -670,7 +622,6 @@ class EmbeddedPlayerWindow(QWidget):
 
             # 3. OSD 已唤醒状态：重置倒计时，重绘并按 2D 焦点导航
             self._show_osd()
-            self.osd_overlay.update()
             fw = QApplication.focusWidget()
 
             ctrl_buttons = [self.btn_play_pause, self.btn_speed, self.btn_next, self.btn_close]
@@ -685,11 +636,9 @@ class EmbeddedPlayerWindow(QWidget):
                     return True
                 elif key == Qt.Key.Key_Down:
                     self.btn_play_pause.setFocus()
-                    self.osd_overlay.update()
                     return True
                 elif key == Qt.Key.Key_Up:
                     self.btn_close.setFocus()
-                    self.osd_overlay.update()
                     return True
                 elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
                     self._toggle_pause()
@@ -699,19 +648,16 @@ class EmbeddedPlayerWindow(QWidget):
             if fw in ctrl_buttons:
                 if key == Qt.Key.Key_Up:
                     self.seek_slider.setFocus()
-                    self.osd_overlay.update()
                     return True
                 elif key == Qt.Key.Key_Left:
                     idx = ctrl_buttons.index(fw)
                     prev_idx = (idx - 1) % len(ctrl_buttons)
                     ctrl_buttons[prev_idx].setFocus()
-                    self.osd_overlay.update()
                     return True
                 elif key == Qt.Key.Key_Right:
                     idx = ctrl_buttons.index(fw)
                     next_idx = (idx + 1) % len(ctrl_buttons)
                     ctrl_buttons[next_idx].setFocus()
-                    self.osd_overlay.update()
                     return True
                 elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
                     fw.click()
@@ -731,28 +677,37 @@ class EmbeddedPlayerWindow(QWidget):
                 background-color: #000000;
             }}
 
-            QWidget#OSDOverlay {{
+            QFrame#OSDTopBar {{
+                background-color: rgba(12, 18, 24, 0.85);
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }}
+
+            QFrame#OSDBottomBar {{
+                background-color: rgba(12, 18, 24, 0.85);
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+            }}
+
+            QFrame#OSDCenterFrame {{
                 background: transparent;
-                background-color: transparent;
             }}
 
             QLabel#OSDTitle {{
                 color: {text};
-                font-size: 22px;
+                font-size: {self.s(22)}px;
                 font-weight: 800;
                 background: transparent;
             }}
 
             QLabel#OSDTimeLabel {{
                 color: {accent};
-                font-size: 15px;
+                font-size: {self.s(15)}px;
                 font-weight: 700;
                 background: transparent;
             }}
 
             QLabel#OSDHintLabel {{
                 color: {text2};
-                font-size: 13px;
+                font-size: {self.s(13)}px;
                 font-weight: 500;
                 background: transparent;
             }}
@@ -760,12 +715,12 @@ class EmbeddedPlayerWindow(QWidget):
             QFrame#OSDLoadingCard {{
                 background-color: rgba(10, 15, 20, 0.88);
                 border: 1.5px solid {accent};
-                border-radius: 12px;
+                border-radius: {self.s(12)}px;
             }}
 
             QLabel#OSDLoadingText {{
                 color: {accent};
-                font-size: 15px;
+                font-size: {self.s(15)}px;
                 font-weight: 700;
                 background: transparent;
             }}
@@ -773,40 +728,39 @@ class EmbeddedPlayerWindow(QWidget):
             QFrame#CenterPopupCard {{
                 background-color: rgba(10, 15, 20, 0.88);
                 border: 2px solid {accent};
-                border-radius: 16px;
+                border-radius: {self.s(16)}px;
             }}
 
             QLabel#CenterPopupText {{
                 color: {accent_hover};
-                font-size: 24px;
+                font-size: {self.s(24)}px;
                 font-weight: 800;
                 background: transparent;
             }}
 
-            /* ── 可聚焦进度条滑块 ── */
             QSlider#OSDSeekSlider::groove:horizontal {{
-                height: 6px;
+                height: {self.s(6)}px;
                 background: rgba(255, 255, 255, 0.2);
-                border-radius: 3px;
+                border-radius: {self.s(3)}px;
             }}
             QSlider#OSDSeekSlider::sub-page:horizontal {{
                 background: {accent};
-                border-radius: 3px;
+                border-radius: {self.s(3)}px;
             }}
             QSlider#OSDSeekSlider::handle:horizontal {{
                 background: {accent_hover};
-                width: 16px;
-                height: 16px;
-                margin: -5px 0;
-                border-radius: 8px;
+                width: {self.s(16)}px;
+                height: {self.s(16)}px;
+                margin: -{self.s(5)}px 0;
+                border-radius: {self.s(8)}px;
             }}
             QSlider#OSDSeekSlider::handle:horizontal:hover, QSlider#OSDSeekSlider::handle:horizontal:focus {{
                 background: #FFFFFF;
                 border: 2px solid {accent};
-                width: 20px;
-                height: 20px;
-                margin: -7px 0;
-                border-radius: 10px;
+                width: {self.s(20)}px;
+                height: {self.s(20)}px;
+                margin: -{self.s(7)}px 0;
+                border-radius: {self.s(10)}px;
             }}
             QSlider#OSDSeekSlider:focus {{
                 outline: none;
@@ -816,9 +770,9 @@ class EmbeddedPlayerWindow(QWidget):
                 background-color: rgba(255, 255, 255, 0.1);
                 color: {text};
                 border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 10px;
-                padding: 8px 18px;
-                font-size: 14px;
+                border-radius: {self.s(10)}px;
+                padding: {self.s(8)}px {self.s(18)}px;
+                font-size: {self.s(14)}px;
                 font-weight: 600;
             }}
             QPushButton#OSDCtrlBtn:hover {{
@@ -837,9 +791,9 @@ class EmbeddedPlayerWindow(QWidget):
                 background-color: rgba(239, 68, 68, 0.2);
                 color: #EF4444;
                 border: 1px solid rgba(239, 68, 68, 0.4);
-                border-radius: 10px;
-                padding: 6px 16px;
-                font-size: 13px;
+                border-radius: {self.s(10)}px;
+                padding: {self.s(6)}px {self.s(16)}px;
+                font-size: {self.s(13)}px;
                 font-weight: 600;
             }}
             QPushButton#OSDCloseBtn:hover, QPushButton#OSDCloseBtn:focus {{
