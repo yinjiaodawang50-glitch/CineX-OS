@@ -12,7 +12,6 @@ from PyQt6.QtGui import QPixmap, QPainter, QColor
 class SplashScreen(QWidget):
     def __init__(self, logo_path="assets/logo.png"):
         super().__init__()
-        # 【关键修复 1】：用 Tool 替代 SplashScreen，强行开启 Windows 原生 Alpha 分层图层
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
@@ -22,8 +21,8 @@ class SplashScreen(QWidget):
         self.setStyleSheet("background: transparent;")
         self.setFixedSize(520, 520)
 
-        # 【关键修复 2】：初始透明度设为 0
-        self.setWindowOpacity(0.0)
+        # 兼容 Linux X11 裸环境，保持 1.0 不透明度
+        self.setWindowOpacity(1.0)
 
         # 屏幕正中央居中
         screen = QApplication.primaryScreen()
@@ -36,7 +35,6 @@ class SplashScreen(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # 降级路径检查
         if not os.path.exists(logo_path):
             logo_path = "assets/logo_pure_transparent.png"
         if not os.path.exists(logo_path):
@@ -45,7 +43,7 @@ class SplashScreen(QWidget):
         self.logo_lbl = QLabel()
         self.logo_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.logo_lbl.setStyleSheet("background: transparent;")
-        
+
         if os.path.exists(logo_path):
             pix = QPixmap(logo_path).scaled(
                 380, 380,
@@ -56,7 +54,7 @@ class SplashScreen(QWidget):
         else:
             self.logo_lbl.setText("CineX OS")
             self.logo_lbl.setStyleSheet("font-size: 38px; font-weight: bold; color: #00C2D1; background: transparent;")
-        
+
         lay.addWidget(self.logo_lbl)
         lay.addSpacing(16)
 
@@ -72,7 +70,6 @@ class SplashScreen(QWidget):
         """)
         lay.addWidget(self.status_lbl)
 
-    # 【关键修复 3】：重写 paintEvent，强制清空背景为 100% 完全透明
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
