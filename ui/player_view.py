@@ -57,12 +57,9 @@ class OSDOverlay(QWidget):
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         self.setObjectName("OSDOverlay")
+        self.setStyleSheet("background: transparent;")
 
     def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
-        painter.end()
         super().paintEvent(event)
 
 
