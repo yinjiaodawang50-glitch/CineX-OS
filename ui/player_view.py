@@ -430,6 +430,9 @@ class EmbeddedPlayerWindow(QWidget):
         if self._has_video_started and not is_buffering:
             if self.loading_card.isVisible():
                 self.loading_card.hide()
+                if not self.popup_card.isVisible():
+                    self.center_card_frame.hide()
+
         else:
             if is_buffering:
                 self.lbl_loading_text.setText("正在缓冲视频数据，请稍候...")
@@ -483,13 +486,19 @@ class EmbeddedPlayerWindow(QWidget):
         self.bottom_bar_frame.show()
         self.top_bar_frame.raise_()
         self.bottom_bar_frame.raise_()
+        if not self.loading_card.isVisible() and not self.popup_card.isVisible():
+            self.center_card_frame.hide()
+
         if not self.focusWidget() or not self.bottom_bar_frame.isAncestorOf(self.focusWidget()):
             self.seek_slider.setFocus()
         self._osd_timer.start()
 
+
     def _hide_osd(self):
-        if not self._has_video_started or self.loading_card.isVisible():
+        if not self._has_video_started:
             return
+        if not self.loading_card.isVisible() and not self.popup_card.isVisible():
+            self.center_card_frame.show()
         self.top_bar_frame.hide()
         self.bottom_bar_frame.hide()
 
@@ -499,8 +508,16 @@ class EmbeddedPlayerWindow(QWidget):
         )
         self.lbl_popup_text.setText(text)
         self.popup_card.show()
+        self.loading_card.hide()
+        self.center_card_frame.show()  # 仅在需要弹窗提示时短暂显示
         self.center_card_frame.raise_()
         self._center_popup_timer.start()
+
+    def _hide_center_popup(self):
+        self.popup_card.hide()
+        # 1.2 秒提示结束后，彻底隐藏中央容器
+        if not self.loading_card.isVisible():
+            self.center_card_frame.hide()
 
     def _hide_center_popup(self):
         self.popup_card.hide()
