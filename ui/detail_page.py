@@ -377,7 +377,6 @@ class DetailPage(QWidget):
         if self._playing:
             return
         self._playing = True
-        self.close()
 
         from ui.player_view import EmbeddedPlayerWindow
         self.main._current_player = EmbeddedPlayerWindow(
@@ -393,7 +392,13 @@ class DetailPage(QWidget):
             ep_idx=ep_idx,
             api_name=self.api
         )
+
+        # 核心修正：先弹出并激活全屏播放器，再关闭详情页，防止闪退回主页
         self.main._current_player.showFullScreen()
+        self.main._current_player.raise_()
+        self.main._current_player.activateWindow()
+
+        self.close()
 
     def _update_fav_text(self):
         ids = [str(x["vod_id"]) for x in ConfigManager.load_user_data()["favorites"]]
