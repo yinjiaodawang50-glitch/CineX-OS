@@ -154,6 +154,10 @@ class EmbeddedPlayerWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setObjectName("EmbeddedPlayer")
 
+        screen = QApplication.primaryScreen()
+        if screen:
+            self.setGeometry(screen.geometry())
+
         self._build_ui()
         self._apply_theme()
 
@@ -175,6 +179,9 @@ class EmbeddedPlayerWindow(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.raise_()
+        self.activateWindow()
+        self._sync_overlay_geometry()
         if not self._mpv_started:
             self._mpv_started = True
             QTimer.singleShot(50, self._start_mpv)
