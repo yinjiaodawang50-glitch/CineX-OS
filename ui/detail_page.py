@@ -378,6 +378,10 @@ class DetailPage(QWidget):
             return
         self._playing = True
 
+        # 【关键修正 1】：点击播放立刻隐藏详情页，彻底消除“卡在详情页”的假死错觉
+        self.hide()
+
+        # 实例化播放器
         from ui.player_view import EmbeddedPlayerWindow
         player = EmbeddedPlayerWindow(
             parent_window=self.main,
@@ -393,14 +397,14 @@ class DetailPage(QWidget):
             api_name=self.api
         )
         self.main._current_player = player
-        
-        # 先弹出全屏播放器
+
+        # 展示全屏播放器
         player.showFullScreen()
         player.raise_()
         player.activateWindow()
 
-        # 延迟 100ms 关闭详情页，防止虚拟机渲染太慢导致画面中缝闪退回主主界面
-        QTimer.singleShot(100, self.close)
+        # 【关键修正 2】：安全异步销毁详情页，不再硬编码 100ms
+        QTimer.singleShot(0, self.close)
 
 
     def _update_fav_text(self):

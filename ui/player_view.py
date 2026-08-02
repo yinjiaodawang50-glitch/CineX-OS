@@ -37,23 +37,26 @@ logger = logging.getLogger("EmbeddedPlayer")
 
 
 class OSDOverlay(QWidget):
-    """单窗口结构下的 OSD 悬浮层（作为 EmbeddedPlayerWindow 的标准原生子控件）"""
+    """置顶全透明 OSD 悬浮蒙层"""
     def __init__(self, parent_player):
-        super().__init__(parent_player)  # 标准子控件
+        super().__init__(parent_player)
         self.player = parent_player
-        
-        # 声明为原生子窗口，使其能够在 X11/Win32 原生 Z 轴层级中被 raise_() 稳稳压在 MPV 上方
-        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        if sys.platform == "win32":
+            # Windows 下保持子控件，DWM 完美渲染
+            self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        else:
+            # Linux/X11 下使用顶级置顶 + BypassWindowManagerHint 绕过 X11 遮挡
+            self.setWindowFlags(
+                Qt.WindowType.Window |
+                Qt.WindowType.FramelessWindowHint |
+                Qt.WindowType.WindowStaysOnTopHint |
+                Qt.WindowType.BypassWindowManagerHint
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
         self.setObjectName("OSDOverlay")
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
-        painter.end()
-        super().paintEvent(event)
-
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -189,12 +192,14 @@ class EmbeddedPlayerWindow(QWidget):
 
     def _sync_overlay_geometry(self):
         if hasattr(self, "osd_overlay") and self.osd_overlay:
-            # 确保悬浮窗口跟随主播放窗口的物理尺寸和全局坐标
-            global_pos = self.mapToGlobal(QPointF(0, 0)).toPoint()
-            self.osd_overlay.setGeometry(global_pos.x(), global_pos.y(), self.width(), self.height())
-            self.osd_overlay.show()
-            self.osd_overlay.raise_()
-            self.osd_overlay.activateWindow()
+            if sys.platform == "win32":
+                self.osd_overlay.setGeometry(0, 0, self.width(), self.height())
+            else:
+                try:
+                    global_pos = self.mapToGlobal(QPoint(0, 0))
+                    self.osd_overlay.setGeometry(global_pos.x(), global_pos.y(), self.width(), self.height())
+                except Exception:
+                    pass
 
 
     def showEvent(self, event):
@@ -516,10 +521,17 @@ class EmbeddedPlayerWindow(QWidget):
 
     # ── OSD 显示与隐藏控制 ──
     def _show_osd(self):
+        self._sync_overlay_geometry()
         self.osd_overlay.show()
         self.osd_overlay.raise_()
+
+        # 【关键修正 3】：强行把被 MPV X11 窗口抢走的焦点抢回来给 OSD
+        if sys.platform != "win32":
+            self.osd_overlay.activateWindow()
+
         if not self.focusWidget() or not self.osd_overlay.isAncestorOf(self.focusWidget()):
             self.seek_slider.setFocus()
+            
         self._osd_timer.start()
 
     def _hide_osd(self):
