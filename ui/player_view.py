@@ -37,15 +37,21 @@ logger = logging.getLogger("EmbeddedPlayer")
 
 
 class OSDOverlay(QWidget):
-    """置顶全透明 OSD 悬浮蒙层，子控件共享窗口焦点并强制物理清屏擦除残留重影"""
+    """置顶全透明 OSD 悬浮蒙层"""
     def __init__(self, parent_player):
-        super().__init__(parent_player)  # 继承父窗口焦点树，确保 :focus 高亮正常生效
+        super().__init__(parent_player)
         self.player = parent_player
+        
+        # 在 Linux / Windows 上将其提升为无边框置顶子窗口，防止被 MPV X11 原生窗口遮挡
+        self.setWindowFlags(
+            Qt.WindowType.SubWindow | 
+            Qt.WindowType.FramelessWindowHint | 
+            Qt.WindowType.WindowStaysOnTopHint
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setObjectName("OSDOverlay")
 
     def paintEvent(self, event):
-        # 核心物理修复：每一帧绘制前，用 Clear 合成模式将整页画布擦除为 100% 纯透明
         painter = QPainter(self)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
         painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
@@ -179,7 +185,13 @@ class EmbeddedPlayerWindow(QWidget):
 
     def _sync_overlay_geometry(self):
         if hasattr(self, "osd_overlay") and self.osd_overlay:
-            self.osd_overlay.setGeometry(self.rect())
+            # 确保悬浮窗口跟随主播放窗口的物理尺寸和全局坐标
+            global_pos = self.mapToGlobal(QPointF(0, 0)).toPoint()
+            self.osd_overlay.setGeometry(global_pos.x(), global_pos.y(), self.width(), self.height())
+            self.osd_overlay.show()
+            self.osd_overlay.raise_()
+            self.osd_overlay.activateWindow()
+
 
     def showEvent(self, event):
         super().showEvent(event)

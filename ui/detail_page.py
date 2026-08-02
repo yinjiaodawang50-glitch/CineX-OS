@@ -379,7 +379,7 @@ class DetailPage(QWidget):
         self._playing = True
 
         from ui.player_view import EmbeddedPlayerWindow
-        self.main._current_player = EmbeddedPlayerWindow(
+        player = EmbeddedPlayerWindow(
             parent_window=self.main,
             movie_data={
                 "vod_id": self.vod_id,
@@ -392,13 +392,16 @@ class DetailPage(QWidget):
             ep_idx=ep_idx,
             api_name=self.api
         )
+        self.main._current_player = player
+        
+        # 先弹出全屏播放器
+        player.showFullScreen()
+        player.raise_()
+        player.activateWindow()
 
-        # 核心修正：先弹出并激活全屏播放器，再关闭详情页，防止闪退回主页
-        self.main._current_player.showFullScreen()
-        self.main._current_player.raise_()
-        self.main._current_player.activateWindow()
+        # 延迟 100ms 关闭详情页，防止虚拟机渲染太慢导致画面中缝闪退回主主界面
+        QTimer.singleShot(100, self.close)
 
-        self.close()
 
     def _update_fav_text(self):
         ids = [str(x["vod_id"]) for x in ConfigManager.load_user_data()["favorites"]]
