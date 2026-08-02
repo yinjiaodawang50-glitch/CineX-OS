@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QFrame, QSlider, QProgressBar, QApplication
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, QSize, QEvent, QThread, pyqtSignal, QPoint, QPointF
+    Qt, QTimer, QSize, QEvent, QThread, pyqtSignal
 )
 from PyQt6.QtGui import QColor, QFont, QPainter
 
@@ -37,19 +37,23 @@ logger = logging.getLogger("EmbeddedPlayer")
 
 
 class OSDOverlay(QWidget):
-    """置顶全透明 OSD 悬浮蒙层"""
+    """单窗口结构下的 OSD 悬浮层（作为 EmbeddedPlayerWindow 的标准原生子控件）"""
     def __init__(self, parent_player):
-        super().__init__(parent_player)
+        super().__init__(parent_player)  # 标准子控件
         self.player = parent_player
         
-        # 在 Linux / Windows 上将其提升为无边框置顶子窗口，防止被 MPV X11 原生窗口遮挡
-        self.setWindowFlags(
-            Qt.WindowType.SubWindow | 
-            Qt.WindowType.FramelessWindowHint | 
-            Qt.WindowType.WindowStaysOnTopHint
-        )
+        # 声明为原生子窗口，使其能够在 X11/Win32 原生 Z 轴层级中被 raise_() 稳稳压在 MPV 上方
+        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setObjectName("OSDOverlay")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
+        painter.end()
+        super().paintEvent(event)
+
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -197,7 +201,6 @@ class EmbeddedPlayerWindow(QWidget):
         super().showEvent(event)
         self.raise_()
         self.activateWindow()
-        self._sync_overlay_geometry()
         if not self._mpv_started:
             self._mpv_started = True
             QTimer.singleShot(50, self._start_mpv)
@@ -211,23 +214,18 @@ class EmbeddedPlayerWindow(QWidget):
 
     # ── UI 构建 ──────────────────────────────────────────────────
     def _build_ui(self):
-        main_lay = QVBoxLayout(self)
-        main_lay.setContentsMargins(0, 0, 0, 0)
-
-        # 1. 视频渲染容器 (MPV --wid 绑定)
+        # 视频渲染容器与 OSDOverlay 作为同级原生子控件
         self.video_container = QWidget(self)
         self.video_container.setObjectName("VideoContainer")
         self.video_container.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self.video_container.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
-        self.video_container.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
-        self.video_container.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        main_lay.addWidget(self.video_container)
 
-        # 2. OSD 覆盖蒙层（子控件模式，共享顶层窗口焦点）
         self.osd_overlay = OSDOverlay(self)
 
+        # 布局直接加在 osd_overlay 上
         osd_lay = QVBoxLayout(self.osd_overlay)
         osd_lay.setContentsMargins(40, 30, 40, 30)
+
 
         # 顶部 OSD 栏
         top_bar = QHBoxLayout()
@@ -351,8 +349,11 @@ class EmbeddedPlayerWindow(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        if hasattr(self, "osd_overlay") and self.osd_overlay:
-            self.osd_overlay.setGeometry(self.rect())
+        w, h = self.width(), self.height()
+        # 画面与 OSD 在同一窗口内部精准重叠
+        self.video_container.setGeometry(0, 0, w, h)
+        self.osd_overlay.setGeometry(0, 0, w, h)
+        self.osd_overlay.raise_()  # 在同级原生窗口中，将 OSD 原生子窗口压在视频原生子窗口上方
 
     # ── MPV 启动与异步 Worker ──
     def _start_mpv(self):
@@ -515,17 +516,17 @@ class EmbeddedPlayerWindow(QWidget):
 
     # ── OSD 显示与隐藏控制 ──
     def _show_osd(self):
-        self.osd_overlay.setGeometry(self.rect())
         self.osd_overlay.show()
         self.osd_overlay.raise_()
         if not self.focusWidget() or not self.osd_overlay.isAncestorOf(self.focusWidget()):
             self.seek_slider.setFocus()
-        self._osd_timer.start()  # 重置 4 秒倒计时
+        self._osd_timer.start()
 
     def _hide_osd(self):
         if not self._has_video_started or self.loading_card.isVisible():
             return
         self.osd_overlay.hide()
+
 
     def _show_center_popup(self, icon_name, text):
         self.lbl_popup_icon.setPixmap(
