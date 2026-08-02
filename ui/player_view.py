@@ -177,6 +177,10 @@ class EmbeddedPlayerWindow(QWidget):
         self._center_popup_timer.setInterval(1200)
         self._center_popup_timer.timeout.connect(self._hide_center_popup)
 
+    def _sync_overlay_geometry(self):
+        if hasattr(self, "osd_overlay") and self.osd_overlay:
+            self.osd_overlay.setGeometry(self.rect())
+
     def showEvent(self, event):
         super().showEvent(event)
         self.raise_()
