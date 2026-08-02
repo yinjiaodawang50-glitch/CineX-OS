@@ -286,6 +286,17 @@ class EmbeddedPlayerWindow(QWidget):
         hw = s.get("hardware_accel", "自动")
         skip_start = s.get("skip_start", 0)
 
+        mpv_log_map = {
+            "DEBUG": "debug",
+            "INFO": "info",
+            "WARNING": "warn",
+            "ERROR": "error",
+            "CRITICAL": "fatal"
+        }
+
+        sys_log_level = s.get("log_level", "INFO").upper()
+        mpv_loglevel = mpv_log_map.get(sys_log_level, "warn")
+
         wid = int(self.video_container.winId())
 
         # 设置解码参数
@@ -309,7 +320,7 @@ class EmbeddedPlayerWindow(QWidget):
                 input_vo_keyboard=False,
                 input_cursor=False,
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                loglevel="warning"
+                loglevel=mpv_loglevel
             )
 
             # 跳过片头或续播处理
